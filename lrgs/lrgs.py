@@ -357,3 +357,89 @@ class Parameters_GaussMix(Parameters):
                         c.append('_'.join(['W', str(i), str(j)]))
         return c
 
+
+
+# partial implementation - no hyperprior or updating for rates
+# lots of redundant code here compared with GaussMix
+class Parameters_ExpMix(Parameters):
+    def __init__(self, Nexp, *args, **kwargs):
+        Parameters.__init__(self, *args, **kwargs)
+        self.Nexp = Nexp
+        # set initial values
+        self.G = np.random.choice(range(Nexp), self.n) # n
+        self.nG = np.array([len(np.where(self.G == k)[0]) for k in range(Nexp)]) # Nexp
+        self.pi = (1.0*self.nG) / self.n # Nexp
+        self.rate =  [np.ones(self.p) for k in range(Nexp)] # Nexp of p  -- todo: improve
+    def update_pi(self):
+        if self.Nexp > 1: self.pi = np.random.dirichlet(1 + self.nG)
+    def update_X(self):
+        B_Sinv = self.B[self.prange,:] * self.Sigma_inv # p*m
+        B_Sinv_B_j = np.array([np.dot(B_Sinv[j,:], self.B[self.pin+j,:]) for j in range(self.p)])
+        xi_hat = np.zeros(self.p)
+        s2 = np.zeros(self.p)
+        for i in range(self.n):
+          zi = np.concatenate((self.xdata[i,:], self.ydata[i,:])) - np.concatenate((self.X[i,self.prange], self.Y[i,:])) # p+m
+          for j in range(self.p):
+            s2[j] = 1.0/(self.M_inv[i][j,j] + B_Sinv_B_j[j])
+            zi_star = zi.copy() # p+m
+            zi_star[j] = self.xdata[i,j]
+            inds = range(self.pin+self.p)
+            inds.pop(self.pin+j)
+            pred = self.X[i,inds] * self.B[inds,:] # 1*m
+            xi_hat[j] = s2[j] * (np.dot(self.M_inv[i][j,:], zi_star) - self.rate[self.G[i]][j] + np.dot(B_Sinv[j,:], self.Y[i,:] - pred))
+            # next covariate
+          self.X[i,self.prange] = np.random.normal(xi_hat, np.sqrt(s2))
+          while np.any(self.X[i,self.prange] < 0.0): # danger of neverending loop!
+            self.X[i,self.prange] = np.random.normal(xi_hat, np.sqrt(s2))
+          # next data point
+    def update_G(self):
+        if self.Nexp < 2:
+            return
+        for i in range(self.n):
+            q = np.array([self.pi[k] * st.expon.pdf(self.X[i,self.prange], scale=1.0/self.rate[k]) for k in range(self.Nexp)])
+            q /= np.sum(q)
+            self.G[i] = np.where(np.random.multinomial(1, q) == 1)[0][0]
+        self.nG = np.array([len(np.where(self.G == k)[0]) for k in range(self.Nexp)])
+    def update_rate(self):
+        raise Exception('update_rate not written')
+    def update(self, fix=''):
+        Parameters.update(self, fix)
+        if fix.find('p') == -1: self.update_pi()
+        if fix.find('x') == -1: self.update_X()
+        if fix.find('g') == -1: self.update_G()
+        #if fix.find('l') == -1: self.update_rate()
+    def _init_chain(self, chain, nmc, trace):
+        Parameters._init_chain(self, chain, nmc, trace)
+        if trace.find('x') != -1: chain.X = np.full((self.n, self.p, nmc), np.nan)
+        if trace.find('p') != -1: chain.pi = np.full((self.Nexp, nmc), np.nan)
+        if trace.find('g') != -1: chain.G = np.full((self.n, nmc), np.nan)
+        if trace.find('l') != -1: chain.rate = np.full((self.Nexp, self.p, nmc), np.nan)
+    def _store(self, chain, i):
+        Parameters._store(self, chain, i)
+        if chain.trace.find('x') != -1:
+            if self.pin == 1: chain.X[:,:,i] = self.X[:,-1]
+            else: chain.X[:,:,i] = self.X
+        if chain.trace.find('p') != -1: chain.pi[:,i] = self.pi
+        if chain.trace.find('g') != -1: chain.G[:,i] = self.G
+        if chain.trace.find('l') != -1: chain.rate[:,:,i] = np.array([self.rate[k] for k in range(self.Nexp)])
+    def _namecolumns(self, trace):
+        c = Parameters._namecolumns(self, trace)
+        for param in trace:
+            if param == 'X':
+                for i in range(self.n):
+                    for j in range(self.m):
+                        c.append('_'.join(['Y', str(i), str(j)]))
+            elif param == 'pi':
+                for k in range(self.Nexp):
+                    c.append('_'.join(['pi', str(k)]))
+            elif param == 'G':
+                for k in range(self.n):
+                    c.append('_'.join(['G', str(k)]))
+            elif param == 'rate':
+                for k in range(self.Nexp):
+                    for j in range(self.p):
+                        c.append('_'.join(['rate', str(k), str(j)]))
+        return c
+
+
+
