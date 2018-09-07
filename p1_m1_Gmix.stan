@@ -19,11 +19,17 @@ parameters {
     real beta;
     real<lower=0> Sigma;
     simplex[Ngauss] pi;
-    ordered [Ngauss] mu;
-    vector<lower=0> [Ngauss] Tau;
-    real<lower=0> U;
+    ordered [Ngauss] mu_raw;
+    vector<lower=0> [Ngauss] Tau_raw;
+    real<lower=0> U_raw;
     real<lower=0> W;
 }
+transformed parameters {
+  vector [Ngauss] Tau = Tau_raw * inv(2*W);
+  real U = U_raw * inv(2*W);
+  vector [Ngauss] mu = mu_raw * sqrt(U);
+}
+
 model {
     vector [Ngauss] log_sqrt_Tau = 0.5 * log(Tau);
     vector [Ngauss] log_pi = log(pi);
@@ -47,5 +53,12 @@ model {
      }
 }
 generated quantities{
+  vector [Ngauss] log_Tau = log(Tau);
+  real log_U = log(U);
+  real log_W = log(W);
+
+  vector [Ngauss] log_Tau_raw = log(Tau_raw);
+  real log_U_raw = log(U_raw);
+
   real mu0 = normal_rng(mean(mu),sqrt(U/Ngauss));
 }
